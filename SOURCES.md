@@ -1,7 +1,6 @@
 # Corpus sources (verified, live as of Sept 2026)
 
-Download these manually into `data/raw_pdfs/` — IRD's site blocks scripted
-access reliably enough that a manual pull is faster than fighting it.
+Download these manually into `data/raw_pdfs/`
 
 ## Primary statute
 - **Income Tax Act 2058 (unofficial English translation)**

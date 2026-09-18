@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF (fitz is the legacy import name)
 
 
 @dataclass
@@ -49,23 +49,38 @@ def _detect_clause(text: str) -> str | None:
 
 
 def load_pdf(path: Path) -> list[RawPage]:
-    """Extract one RawPage per PDF page, in reading order."""
+    """
+    Extract one RawPage per PDF page, in reading order.
+
+    Clause detection carries state across pages: a section spanning many
+    pages (common — definitions sections, schedules) only restates
+    "Section N" on its first page. Without carry-forward, every
+    continuation page loses its citation. We track the last section seen
+    and apply it to any page that doesn't introduce a new one, and reset
+    that state per-document so section numbers never leak across files.
+    """
     if not path.exists():
         raise FileNotFoundError(f"No such file: {path}")
 
     pages: list[RawPage] = []
     doc = fitz.open(path)
+    running_clause: str | None = None
     try:
         for i, page in enumerate(doc, start=1):
             text = page.get_text("text").strip()
             if not text:
                 continue  # skip blank/scanned pages rather than fabricate content
+
+            new_clause = _detect_clause(text)
+            if new_clause:
+                running_clause = new_clause
+
             pages.append(
                 RawPage(
                     source_file=path.name,
                     page_number=i,
                     text=text,
-                    detected_clause=_detect_clause(text),
+                    detected_clause=running_clause,
                 )
             )
     finally:
