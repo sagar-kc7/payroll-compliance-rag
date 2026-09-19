@@ -3,9 +3,7 @@ Load raw compliance PDFs into page-level documents with metadata.
 
 This is intentionally the *loader* only — not the chunker. Keep them
 separate: the loader's job is faithful extraction + provenance, the
-chunker's job (src/ingestion/chunker.py, next step) is deciding split
-boundaries. Mixing them makes it hard to swap chunking strategies later
-without re-touching extraction.
+chunker's job (src/ingestion/chunker.py) is deciding split boundaries.
 """
 
 from __future__ import annotations
@@ -27,53 +25,60 @@ class RawPage:
     detected_clause: str | None = field(default=None)
 
 
-# Matches "Section 87", "Sec. 87", "दफा" numbers are Devanagari digits and
-# need separate handling — see NOTE below.
-_SECTION_PATTERN = re.compile(r"\b(?:Section|Sec\.?)\s+(\d+[A-Za-z]?)\b")
+# Real headings look like "4.  Computation and rate of tax:" — bare
+# number, period, 1-4 spaces, Capitalized Title, colon.
+_HEADING_PATTERN = re.compile(
+    r"(?:^|\n)(\d{1,3})\.\s{1,4}([A-Z][A-Za-z,\-\s]{2,100}):",
+)
 
 
-def _detect_clause(text: str) -> str | None:
+def _heading_word(source_file: str) -> str:
     """
-    Best-effort clause/section detector for citation metadata.
-
-    NOTE: this only catches English "Section N" patterns. If your corpus
-    includes Nepali-script PDFs (see data/SOURCES.md caveat), this will
-    silently return None for those pages — that's a real gap, not an
-    edge case, given IRD's directives are Devanagari-only. Decide
-    explicitly whether v1 scopes to English-translated sources or whether
-    you add a Devanagari दफा (\u0926\u092b\u093e) pattern here before
-    treating this function as done.
+    Acts and Rules number their provisions under different labels
+    ("Section N" vs "Rule N"). Citing a Rules document as "Section" would
+    be a wrong, checkable citation — infer the right word from filename.
     """
-    match = _SECTION_PATTERN.search(text)
-    return f"Section {match.group(1)}" if match else None
+    return "Rule" if "rule" in source_file.lower() else "Section"
 
 
 def load_pdf(path: Path) -> list[RawPage]:
     """
     Extract one RawPage per PDF page, in reading order.
 
-    Clause detection carries state across pages: a section spanning many
-    pages (common — definitions sections, schedules) only restates
-    "Section N" on its first page. Without carry-forward, every
-    continuation page loses its citation. We track the last section seen
-    and apply it to any page that doesn't introduce a new one, and reset
-    that state per-document so section numbers never leak across files.
+    Clause detection requires the matched number to strictly exceed the
+    current running section number. This rejects nested numbered items
+    inside quoted amendment text, or Schedule items that restart
+    numbering from 1, which match the same "N. Title:" shape as a real
+    heading but use small/reused numbers — a real Act's section numbers
+    only increase as you read forward.
+
+    KNOWN LIMITATION: Schedules (which often contain the actual tax rate
+    tables) will NOT get their own distinct section labels once the main
+    numbered body has passed a higher number than the Schedule's own item
+    numbers. Those pages keep citing the last real Section instead. This
+    is a real correctness gap for any golden-set question sourced from a
+    Schedule.
     """
     if not path.exists():
         raise FileNotFoundError(f"No such file: {path}")
 
+    heading_word = _heading_word(path.name)
     pages: list[RawPage] = []
     doc = fitz.open(path)
     running_clause: str | None = None
+    running_num: int | None = None
     try:
         for i, page in enumerate(doc, start=1):
             text = page.get_text("text").strip()
             if not text:
-                continue  # skip blank/scanned pages rather than fabricate content
+                continue
 
-            new_clause = _detect_clause(text)
-            if new_clause:
-                running_clause = new_clause
+            for match in _HEADING_PATTERN.finditer(text):
+                num = int(match.group(1))
+                if running_num is None or num > running_num:
+                    running_num = num
+                    running_clause = f"{heading_word} {num}"
+                    break
 
             pages.append(
                 RawPage(
@@ -114,9 +119,3 @@ if __name__ == "__main__":
 
     with_clause = sum(1 for p in pages if p.detected_clause)
     print(f"Clause metadata detected on {with_clause}/{len(pages)} pages")
-    if with_clause < len(pages) * 0.5:
-        print(
-            "WARNING: clause detection hit rate is low. Check whether your "
-            "corpus is Nepali-script (expected, see docstring) or whether "
-            "the English pattern needs work."
-        )
