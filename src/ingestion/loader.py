@@ -25,10 +25,21 @@ class RawPage:
     detected_clause: str | None = field(default=None)
 
 
-# Real headings look like "4.  Computation and rate of tax:" — bare
-# number, period, 1-4 spaces, Capitalized Title, colon.
+# Real Section/Rule headings look like "4.  Computation and rate of tax:"
 _HEADING_PATTERN = re.compile(
     r"(?:^|\n)(\d{1,3})\.\s{1,4}([A-Z][A-Za-z,\-\s]{2,100}):",
+)
+
+# Real Schedule headings are a distinctive two-line shape:
+#   "Schedule-1"
+#   "(Relating to Section 4)"
+# Cross-references and amendment-history mentions of "Schedule-1" elsewhere
+# in the document do NOT have that second line immediately following, so
+# requiring both together is what keeps this from false-triggering on
+# body-text mentions (verified against a real one at physical page 463 —
+# "Schedule-1 / (70) / Amendment to Schedule-1:" — which does not match).
+_SCHEDULE_BOUNDARY_PATTERN = re.compile(
+    r"(?:^|\n)\s*Schedule[\s\-]?(\d{1,2})\s*\n\s*\(Relating to Section",
 )
 
 
@@ -45,19 +56,29 @@ def load_pdf(path: Path) -> list[RawPage]:
     """
     Extract one RawPage per PDF page, in reading order.
 
-    Clause detection requires the matched number to strictly exceed the
-    current running section number. This rejects nested numbered items
-    inside quoted amendment text, or Schedule items that restart
-    numbering from 1, which match the same "N. Title:" shape as a real
-    heading but use small/reused numbers — a real Act's section numbers
-    only increase as you read forward.
+    Two independent labeling modes, switched by whether a real Schedule
+    boundary has been seen yet:
 
-    KNOWN LIMITATION: Schedules (which often contain the actual tax rate
-    tables) will NOT get their own distinct section labels once the main
-    numbered body has passed a higher number than the Schedule's own item
-    numbers. Those pages keep citing the last real Section instead. This
-    is a real correctness gap for any golden-set question sourced from a
-    Schedule.
+    - Main-body mode: pages are labeled "Section N" / "Rule N", using a
+      monotonic-increasing constraint (a real Act's section numbers only
+      go up) to reject false matches from nested/quoted numbering inside
+      amendment text.
+    - Schedule mode: once a genuine "Schedule-N (Relating to Section M)"
+      boundary is detected, pages switch to "Schedule N Item M" labels,
+      with their OWN monotonic item counter that resets at each new
+      Schedule boundary — schedule items restart numbering from 1, which
+      would otherwise collide with the main-body counter.
+
+    Once in schedule mode, we stay there for the rest of the document —
+    Nepali Acts structurally put Schedules at the end, after all
+    substantive Sections, so there's no real case of "returning" to
+    main-body content after the first Schedule starts.
+
+    KNOWN LIMITATION: any page after schedules end that isn't itself a
+    numbered item (e.g. a later "Amendments" appendix, like the one seen
+    around physical page 463) will just carry forward the last real
+    schedule-item label rather than getting its own — not solved here,
+    flag if a golden-set question ends up sourced from that region.
     """
     if not path.exists():
         raise FileNotFoundError(f"No such file: {path}")
@@ -65,20 +86,42 @@ def load_pdf(path: Path) -> list[RawPage]:
     heading_word = _heading_word(path.name)
     pages: list[RawPage] = []
     doc = fitz.open(path)
+
     running_clause: str | None = None
-    running_num: int | None = None
+    running_num: int | None = None          # main-body Section/Rule counter
+    in_schedule = False
+    schedule_num: int | None = None
+    schedule_item_num: int | None = None    # resets at each new Schedule
+
     try:
         for i, page in enumerate(doc, start=1):
             text = page.get_text("text").strip()
             if not text:
                 continue
 
-            for match in _HEADING_PATTERN.finditer(text):
-                num = int(match.group(1))
-                if running_num is None or num > running_num:
-                    running_num = num
-                    running_clause = f"{heading_word} {num}"
-                    break
+            # Check for a new Schedule boundary first — it takes priority
+            # over ordinary heading matches and flips the mode permanently.
+            sched_match = _SCHEDULE_BOUNDARY_PATTERN.search(text)
+            if sched_match:
+                in_schedule = True
+                schedule_num = int(sched_match.group(1))
+                schedule_item_num = None
+                running_clause = f"Schedule {schedule_num}"
+
+            if in_schedule:
+                for match in _HEADING_PATTERN.finditer(text):
+                    num = int(match.group(1))
+                    if schedule_item_num is None or num > schedule_item_num:
+                        schedule_item_num = num
+                        running_clause = f"Schedule {schedule_num} Item {num}"
+                        break
+            else:
+                for match in _HEADING_PATTERN.finditer(text):
+                    num = int(match.group(1))
+                    if running_num is None or num > running_num:
+                        running_num = num
+                        running_clause = f"{heading_word} {num}"
+                        break
 
             pages.append(
                 RawPage(
@@ -119,3 +162,6 @@ if __name__ == "__main__":
 
     with_clause = sum(1 for p in pages if p.detected_clause)
     print(f"Clause metadata detected on {with_clause}/{len(pages)} pages")
+
+    schedule_pages = sum(1 for p in pages if p.detected_clause and "Schedule" in p.detected_clause)
+    print(f"Pages labeled as Schedule content: {schedule_pages}")
