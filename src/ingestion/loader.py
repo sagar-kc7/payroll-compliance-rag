@@ -156,6 +156,15 @@ def load_pdf(path: Path) -> list[RawPage]:
     heading_word = _heading_word(path.name)
     pages: list[RawPage] = []
     doc = fitz.open(path)
+    # income_tax_act_2058.pdf pages 190-626 are consolidated amendment
+    # Ordinances/Financial Acts (e.g. "Financial Ordinance, 2059" at page
+    # 190) — a structurally distinct document with no Section/Rule/Schedule
+    # heading format we model. Their content is already folded into the
+    # sections above; citing this range would surface superseded historical
+    # amendment language as if it were current law. Excluded deliberately —
+    # see data/SOURCES.md. Verified pages 605-626 are still this same
+    # amendment-instrument content, not a hidden later Schedule.
+    max_page = 189 if path.name == "income_tax_act_2058.pdf" else None
 
     state = {
         "running_clause": None,
@@ -167,6 +176,8 @@ def load_pdf(path: Path) -> list[RawPage]:
 
     try:
         for i, page in enumerate(doc, start=1):
+            if max_page and i > max_page:
+                break
             text = page.get_text("text").strip()
             if not text:
                 continue

@@ -47,3 +47,12 @@ secondhand summaries citing 2082/83 rates. Before you build the golden set:
 This is exactly the kind of "don't hallucinate a source" discipline the
 Phase 5 grounding work is meant to catch — good if it shows up in your
 corpus decisions.
+
+## Excluded content
+- income_tax_act_2058.pdf pages 190-626 (of 626 total) are excluded at
+  load time. This range is a sequence of consolidated amendment
+  Ordinances/Financial Acts (starts at page 190: "Financial Ordinance,
+  2059"), not the Act itself — their changes are already reflected in
+  the Sections above. Retaining them risked citing superseded historical
+  amendment language as current law. See src/ingestion/loader.py for
+  the exact cutoff logic.
