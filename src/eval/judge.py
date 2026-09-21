@@ -18,6 +18,13 @@ import os
 
 from deepeval.models import DeepEvalBaseLLM
 from langchain_groq import ChatGroq
+from tenacity import retry, retry_if_exception_message, stop_after_attempt, wait_exponential
+
+_rate_limit_retry = retry(
+    retry=retry_if_exception_message(match=".*rate_limit.*|.*429.*"),
+    wait=wait_exponential(multiplier=2, min=2, max=65),
+    stop=stop_after_attempt(6),
+)
 
 
 class GroqJudge(DeepEvalBaseLLM):
@@ -40,10 +47,12 @@ class GroqJudge(DeepEvalBaseLLM):
 
     def load_model(self):
         return self._model
-
+    
+    @_rate_limit_retry
     def generate(self, prompt: str) -> str:
         return self._model.invoke(prompt).content
 
+    @_rate_limit_retry
     async def a_generate(self, prompt: str) -> str:
         response = await self._model.ainvoke(prompt)
         return response.content
