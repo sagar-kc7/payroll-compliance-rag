@@ -12,6 +12,13 @@ from __future__ import annotations
 import os
 
 from langchain_groq import ChatGroq
+from tenacity import retry, retry_if_exception_message, stop_after_attempt, wait_exponential
+
+_rate_limit_retry = retry(
+    retry=retry_if_exception_message(match=".*rate_limit.*|.*429.*"),
+    wait=wait_exponential(multiplier=2, min=2, max=65),
+    stop=stop_after_attempt(6),
+)
 
 _GENERATION_MODEL = "openai/gpt-oss-120b"
 
@@ -23,6 +30,7 @@ Rules:
 - If the context does not contain enough information to answer, say so \
 explicitly rather than guessing.
 - Be concise and specific — cite section numbers when the context includes them.
+- Answer the question as directly as possible before adding supporting detail.
 """
 
 
@@ -34,7 +42,7 @@ def format_context(chunks: list[dict]) -> str:
         parts.append(f"[{label}]\n{c['text']}")
     return "\n\n---\n\n".join(parts)
 
-
+@_rate_limit_retry
 def generate_answer(question: str, context_chunks: list[dict]) -> str:
     """Generate an answer grounded in the given context chunks."""
     model = ChatGroq(
