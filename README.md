@@ -11,14 +11,15 @@ measured cost/latency — the things GenAI/AI Engineer postings (Verisk,
 Niural AI, Leapfrog) actually screen for beyond "can you call an LLM API."
 
 ## Evaluation architecture
-Four independent layers, each scored separately so a regression can be
-traced to its cause:
+Every capability is scored on its own, independently, so a regression can
+be traced to its actual cause rather than a vague "something got worse":
 
 | Layer | Metrics | Tool | Status |
 |---|---|---|---|
 | Retrieval | recall@5, MRR | Deterministic (no judge needed) | See table below |
 | Generator | Faithfulness, Answer Relevancy | DeepEval + Groq judge | Baselined: 0.983 / 0.936 |
-| Pipeline (end-to-end) | Correctness (`GEval`), citation hit rate | DeepEval + Groq judge | Baselined: 0.800 / 88.0% |
+| Pipeline (end-to-end RAG) | Correctness (`GEval`), citation hit rate | DeepEval + Groq judge | Baselined: 0.800 / 88.0% |
+| Extraction (field-level) | Per-field accuracy vs. golden set | Deterministic comparison | Baselined: 100.0% (8-slip set, see scope note below) |
 | Application | p50/p95 latency, cost/query, escalation rate | LangSmith traces | Not started |
 
 Judge model is Groq (`openai/gpt-oss-120b`), not OpenAI — avoids per-eval
@@ -33,16 +34,21 @@ demo rather than spent here.
 | + Cross-encoder reranking | 92.0% | 0.841 |
 
 **Known, investigated gap:** 2 of 25 questions (SSF Sections 5 and 14)
-fail across every variant. Confirmed via direct inspection — neither
-section appears anywhere in the top-15 candidate pool from hybrid
-retrieval, for either query. This is a retrieval-recall problem, not a
-ranking problem, so reranking correctly couldn't fix it (and didn't).
-Root cause: the SSF Act has ~5 short, adjacent sections (4/5/8/9/14) using
-near-identical "contribution/deposit/employer" vocabulary — a corpus
-characteristic, not a technique failure. Deliberately not chased further
-with contextual retrieval (would cost real LLM-generation tokens per
-chunk for a narrow, well-understood 8% gap) — logged as a known
-limitation instead of silently accepted.
+fail across every retrieval variant. Confirmed via direct inspection —
+neither section appears anywhere in the top-15 candidate pool from
+hybrid retrieval, for either query. Retrieval-recall problem, not a
+ranking problem (so reranking correctly couldn't fix it). Root cause:
+~5 short, adjacent SSF sections using near-identical vocabulary — a
+corpus characteristic, not a technique failure. Not chased further with
+contextual retrieval (real token cost for a narrow, understood gap).
+
+### Extraction accuracy — scope note
+100% field accuracy (64/64 checks) on 8 hand-verified synthetic salary
+slips. These slips use a consistent, clearly-labeled format — this
+measures accuracy on well-formatted input, not resilience to genuinely
+ambiguous/noisy real-world formatting. A separate robustness check
+(`test_extraction.py`) confirms extraction survives messier formatting
+without crashing, but that test has no scoreable ground truth by design.
 
 ## Status
 
@@ -58,24 +64,31 @@ limitation instead of silently accepted.
 
 **Phase 2 — Golden dataset & evaluation harness: done**
 - Golden set finalized at 25 hand-written entries across 6 categories
-- All three eval layers (retrieval, generator, pipeline) baselined and
-  regression-gated
+- Retrieval, generator, and pipeline layers all baselined and gated
 
-**Phase 3 — Retrieval iteration: done (stopped deliberately, see table above)**
-- [x] Hybrid (BM25 + dense) retrieval
-- [x] Cross-encoder reranking
-- [ ] Contextual retrieval — not pursued; remaining gap is a corpus
-      characteristic (near-duplicate SSF sections), not a chunking/context
-      problem, and the fix would cost real tokens for narrow gain
+**Phase 3 — Retrieval iteration: done (stopped deliberately)**
+- Hybrid retrieval + cross-encoder reranking, see comparison table above
+- Contextual retrieval not pursued — remaining gap is a corpus
+  characteristic, not a chunking/context problem
 
-**Phase 4 — Structured extraction: not started (current focus)**
-- [ ] Salary slip → Pydantic schema extraction
-- [ ] Validation + bounded repair loop on schema/arithmetic failures
-- [ ] Field-level accuracy eval against a labelled set
+**Phase 4 — Structured extraction: done**
+- `SalarySlip` Pydantic schema, every field grounded in a specific
+  statute provision (Section 5/8 income, Section 64 retirement
+  contribution, SSF Act Section 7 contributions, Section 87 TDS)
+- Extraction via `instructor` + Groq, native validation-repair loop
+  (`max_retries`) rather than a hand-rolled one
+- Arithmetic cross-check (gross = basic + allowances, net = gross −
+  deductions) as a collected-warnings model validator, not a hard
+  failure — tested for both false negatives and true positives
+- Field-level accuracy: 100% on the 8-slip golden set (scope-noted above)
+
+**Phase 5 — Safety layer: not started (current focus)**
+- [ ] PII redaction/detection before data leaves the service
+- [ ] Prompt-injection defense on document/slip text (untrusted input)
+- [ ] Confidence threshold — escalate to human instead of guessing
+- [ ] Grounded citations with clause IDs surfaced to the end user
 
 **Later phases: not started**
-- [ ] Safety layer: PII redaction, prompt-injection defense, confidence
-      gate for escalation
 - [ ] Observability (LangSmith) + cost/latency-aware model routing
       (candidate use for the reserved AWS credits: Bedrock vs Groq
       cost comparison)
@@ -90,10 +103,10 @@ cp .env.example .env   # fill in GROQ_API_KEY, LANGCHAIN_API_KEY
 ```
 
 Note: Groq's free tier caps daily tokens per model (200K/day observed).
-Eval runs involving the judge model can hit this during heavy iteration —
-`tests/eval/` scripts support `--sample N` to test cheaply before running
-the full golden set. Deterministic retrieval evals (`test_retrieval*.py`)
-don't call the judge at all and are safe to run freely.
+Eval runs involving the judge/extraction model can hit this during heavy
+iteration — most `tests/eval/` scripts support `--sample N` or run a
+small number of calls by design. Deterministic retrieval evals
+(`test_retrieval*.py`) don't call any LLM and are safe to run freely.
 
 ## Development workflow
 Feature branches off `main`, PR required to merge (branch protection
