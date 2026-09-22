@@ -16,16 +16,33 @@ traced to its cause:
 
 | Layer | Metrics | Tool | Status |
 |---|---|---|---|
-| Retrieval | recall@5, MRR | Deterministic (no judge needed) | Baselined: 80.0% / 0.661 |
+| Retrieval | recall@5, MRR | Deterministic (no judge needed) | See table below |
 | Generator | Faithfulness, Answer Relevancy | DeepEval + Groq judge | Baselined: 0.983 / 0.936 |
 | Pipeline (end-to-end) | Correctness (`GEval`), citation hit rate | DeepEval + Groq judge | Baselined: 0.800 / 88.0% |
 | Application | p50/p95 latency, cost/query, escalation rate | LangSmith traces | Not started |
 
 Judge model is Groq (`openai/gpt-oss-120b`), not OpenAI — avoids per-eval
 cost entirely; AWS credits kept in reserve for a Phase 6 cost-comparison
-demo rather than spent here. Offline eval (DeepEval) runs against the
-golden set; CI gate (blocks merge on regression) not wired up yet —
-planned for Phase 6.
+demo rather than spent here.
+
+### Retrieval variant comparison (25-entry golden set)
+| Variant | recall@5 | MRR |
+|---|---|---|
+| Baseline (dense, bge-small-en-v1.5) | 88.0% | 0.683 |
+| + Hybrid (BM25 + dense, RRF fusion) | 92.0% | 0.813 |
+| + Cross-encoder reranking | 92.0% | 0.841 |
+
+**Known, investigated gap:** 2 of 25 questions (SSF Sections 5 and 14)
+fail across every variant. Confirmed via direct inspection — neither
+section appears anywhere in the top-15 candidate pool from hybrid
+retrieval, for either query. This is a retrieval-recall problem, not a
+ranking problem, so reranking correctly couldn't fix it (and didn't).
+Root cause: the SSF Act has ~5 short, adjacent sections (4/5/8/9/14) using
+near-identical "contribution/deposit/employer" vocabulary — a corpus
+characteristic, not a technique failure. Deliberately not chased further
+with contextual retrieval (would cost real LLM-generation tokens per
+chunk for a narrow, well-understood 8% gap) — logged as a known
+limitation instead of silently accepted.
 
 ## Status
 
@@ -34,40 +51,29 @@ planned for Phase 6.
   primary sources only — see `SOURCES.md`)
 - Loader handles Section/Rule/Schedule citation with monotonic-numbering
   guards, multi-heading-per-page splitting, and explicit exclusion of a
-  ~440-page consolidated amendment-ordinance range (pages 190-626 of the
-  Income Tax Act) that has no citable heading structure
-- 3 real bugs found and fixed via direct output inspection, not assumed
-  from summary metrics — see closed PR history on `main`
+  ~440-page consolidated amendment-ordinance range with no citable
+  heading structure
+- 3 real bugs found and fixed via direct output inspection — see closed
+  PR history on `main`
 
 **Phase 2 — Golden dataset & evaluation harness: done**
-- Golden set finalized at **25 hand-written entries** (deliberate scope
-  decision, not a partial toward a larger target): tax_computation 8,
-  ssf 5, exemptions 4, tax_rates 4, tds 3, definitions 1
-- Baseline dense retriever (bge-small-en-v1.5 + Chroma) — recall@5 80.0%,
-  MRR 0.661
-- Basic grounded generator (Groq `openai/gpt-oss-120b`) — faithfulness
-  0.983, relevancy 0.936 (measured on known-correct context, isolating
-  generator quality from retrieval quality)
-- Full pipeline eval — correctness 0.800, citation hit rate 88.0%. Of 6
-  low-scoring questions: 3 were genuine retrieval misses where the
-  generator correctly refused rather than hallucinating (a behavior
-  worth preserving, not "fixing"); 2 were real generator completeness
-  gaps (correct headline fact, dropped stated caveats); 1 exposed a
-  blind spot in the citation_hit metric itself (section-level match
-  doesn't guarantee the specific needed sub-chunk was retrieved, for
-  any section split across many chunks — e.g. Section 2's 17 sub-chunks)
-- All three layers gated with regression-floor assertions in `tests/eval/`
+- Golden set finalized at 25 hand-written entries across 6 categories
+- All three eval layers (retrieval, generator, pipeline) baselined and
+  regression-gated
 
-**Phase 3 — Retrieval iteration: not started**
-- [ ] Hybrid (BM25 + dense) retrieval
-- [ ] Contextual retrieval
-- [ ] Reranking
-- [ ] Re-run `test_retrieval.py` after each change, keep a before/after
-      results table — this table is the actual portfolio deliverable
+**Phase 3 — Retrieval iteration: done (stopped deliberately, see table above)**
+- [x] Hybrid (BM25 + dense) retrieval
+- [x] Cross-encoder reranking
+- [ ] Contextual retrieval — not pursued; remaining gap is a corpus
+      characteristic (near-duplicate SSF sections), not a chunking/context
+      problem, and the fix would cost real tokens for narrow gain
+
+**Phase 4 — Structured extraction: not started (current focus)**
+- [ ] Salary slip → Pydantic schema extraction
+- [ ] Validation + bounded repair loop on schema/arithmetic failures
+- [ ] Field-level accuracy eval against a labelled set
 
 **Later phases: not started**
-- [ ] Structured extraction (salary slip → Pydantic schema) with
-      validation repair loops
 - [ ] Safety layer: PII redaction, prompt-injection defense, confidence
       gate for escalation
 - [ ] Observability (LangSmith) + cost/latency-aware model routing
@@ -86,7 +92,8 @@ cp .env.example .env   # fill in GROQ_API_KEY, LANGCHAIN_API_KEY
 Note: Groq's free tier caps daily tokens per model (200K/day observed).
 Eval runs involving the judge model can hit this during heavy iteration —
 `tests/eval/` scripts support `--sample N` to test cheaply before running
-the full golden set.
+the full golden set. Deterministic retrieval evals (`test_retrieval*.py`)
+don't call the judge at all and are safe to run freely.
 
 ## Development workflow
 Feature branches off `main`, PR required to merge (branch protection
