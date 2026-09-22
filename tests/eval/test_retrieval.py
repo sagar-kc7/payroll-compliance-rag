@@ -33,10 +33,16 @@ def load_golden_set() -> list[dict]:
         return [json.loads(line) for line in f]
 
 
-def evaluate_retrieval(k: int = 5) -> dict:
+def evaluate_retrieval(k: int = 5, retrieve_fn=None) -> dict:
     """
     For each golden question, retrieve top-k and check whether a chunk
     matching (source_file, source_clause) appears among them.
+
+    retrieve_fn: callable(query: str, k: int) -> list[dict]. Defaults to
+    the baseline dense retriever so existing calls/tests are unaffected;
+    pass a different retriever (e.g. src.retrieval.hybrid.retrieve) to
+    evaluate it against the exact same golden set and metric — that's
+    what makes before/after comparisons across Phase 3 changes valid.
 
     recall@k: fraction of questions where the correct section appears
               anywhere in the top-k.
@@ -44,14 +50,17 @@ def evaluate_retrieval(k: int = 5) -> dict:
               appearance (1.0 if it's the top result, 0 if absent).
     """
     golden = load_golden_set()
-    collection = get_collection()
+
+    if retrieve_fn is None:
+        collection = get_collection()
+        retrieve_fn = lambda q, kk: retrieve(q, k=kk, collection=collection)
 
     hits_at_k = 0
     reciprocal_ranks = []
     per_question = []
 
     for entry in golden:
-        results = retrieve(entry["question"], k=k, collection=collection)
+        results = retrieve_fn(entry["question"], k)
 
         rank = None
         for i, r in enumerate(results, start=1):
