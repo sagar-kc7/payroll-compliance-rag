@@ -17,9 +17,17 @@ from __future__ import annotations
 import os
 
 from deepeval.models import DeepEvalBaseLLM
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from tenacity import retry, retry_if_exception_message, stop_after_attempt, wait_exponential
 
+load_dotenv()
+
+# Groq's free tier caps tokens-per-minute fairly low, and DeepEval's
+# metrics make several LLM calls per question internally (claim
+# extraction, verification, etc.), so hitting the limit mid-eval-run is
+# expected, not exceptional. Retry with backoff rather than failing the
+# whole run over a transient 429.
 _rate_limit_retry = retry(
     retry=retry_if_exception_message(match=".*rate_limit.*|.*429.*"),
     wait=wait_exponential(multiplier=2, min=2, max=65),
@@ -47,7 +55,7 @@ class GroqJudge(DeepEvalBaseLLM):
 
     def load_model(self):
         return self._model
-    
+
     @_rate_limit_retry
     def generate(self, prompt: str) -> str:
         return self._model.invoke(prompt).content

@@ -14,9 +14,13 @@ from __future__ import annotations
 import os
 
 import instructor
+from dotenv import load_dotenv
 from groq import Groq
+from langsmith import traceable
 
 from src.extraction.schema import SalarySlip
+
+load_dotenv()
 
 _EXTRACTION_MODEL = "openai/gpt-oss-120b"
 
@@ -37,6 +41,7 @@ def _client() -> instructor.Instructor:
     return instructor.from_groq(groq_client, mode=instructor.Mode.JSON)
 
 
+@traceable(run_type="llm", name="extract_salary_slip")
 def extract_salary_slip(raw_text: str, max_retries: int = 3) -> SalarySlip:
     client = _client()
     return client.chat.completions.create(

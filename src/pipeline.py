@@ -12,7 +12,13 @@ variant Phase 3 found best.
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from dataclasses import dataclass
+
+from langsmith import traceable
 
 from src.generation.answer import generate_answer
 from src.retrieval.reranker import retrieve
@@ -45,6 +51,7 @@ class AnswerResult:
     escalation_reason: str | None = None
 
 
+@traceable(run_type="chain", name="answer_question")
 def answer_question(question: str, k: int = 5) -> AnswerResult:
     results = retrieve(question, k=k)
 

@@ -13,7 +13,13 @@ tests/eval/test_retrieval_hybrid.py's docstring for that finding).
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from sentence_transformers import CrossEncoder
+
+from langsmith import traceable
 
 from src.retrieval.hybrid import retrieve as hybrid_retrieve
 
@@ -29,6 +35,7 @@ def _get_model() -> CrossEncoder:
     return _model
 
 
+@traceable(run_type="retriever", name="hybrid_reranked_retrieve")
 def retrieve(query: str, k: int = 5, candidate_k: int = 15) -> list[dict]:
     """
     Pull `candidate_k` results from hybrid retrieval (wider than k, so
