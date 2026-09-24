@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import os
 
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from tenacity import retry, retry_if_exception_message, stop_after_attempt, wait_exponential
+
+load_dotenv()
 
 _GENERATION_MODEL = "openai/gpt-oss-120b"
 
