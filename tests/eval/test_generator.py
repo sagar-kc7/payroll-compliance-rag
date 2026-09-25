@@ -107,7 +107,7 @@ def evaluate_generator(sample_size: int | None = None) -> dict:
     }
 
 
-@pytest.mark.eval
+@pytest.mark.llm
 @pytest.mark.eval
 def test_generator_faithfulness_and_relevancy():
     """

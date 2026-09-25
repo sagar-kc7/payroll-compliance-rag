@@ -118,7 +118,7 @@ def evaluate_pipeline(k: int = 5, sample_size: int | None = None) -> dict:
         "per_question": results,
     }
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_pipeline_correctness():
     """

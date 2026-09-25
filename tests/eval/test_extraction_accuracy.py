@@ -95,7 +95,7 @@ def evaluate_extraction() -> dict:
         "per_slip": per_slip,
     }
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_extraction_field_accuracy():
     """
