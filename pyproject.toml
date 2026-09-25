@@ -30,7 +30,6 @@ dependencies = [
     # Utilities
     "python-dotenv>=1.0.0",
     "tenacity>=9.0.0",
-    "tiktoken>=0.8.0",
 ]
 
 [project.optional-dependencies]
@@ -44,4 +43,5 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "eval: marks tests as DeepEval evaluation tests (deselect with -m 'not eval')",
+    "llm: marks tests that call Groq and cost real tokens/quota (deselect with -m 'not llm' for CI)",
 ]

@@ -1,0 +1,45 @@
+name: Eval Gate
+
+# Runs every deterministic test — retrieval recall/MRR, PII redaction,
+# injection-pattern detection, confidence-gate escalation logic — on
+# every push and PR. Deliberately does NOT run anything that calls
+# Groq (faithfulness, pipeline correctness, extraction accuracy): the
+# free tier's daily token cap has been hit multiple times during real
+# development of this project, so gating merges on it would make CI
+# flaky for reasons unrelated to code quality. Those LLM-dependent
+# evals are run manually / on a schedule instead — see README.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Download spacy model (for PII tests)
+        run: python -m spacy download en_core_web_md
+
+      - name: Build retrieval index
+        # data/processed/chunks.jsonl is committed; the Chroma vector
+        # index itself is gitignored (regenerable, not source) and must
+        # be built fresh in CI before any retrieval test can run.
+        run: PYTHONPATH=. python src/retrieval/baseline.py
+
+      - name: Run deterministic test suite (no Groq calls)
+        run: pytest tests/ -m "not llm" -v

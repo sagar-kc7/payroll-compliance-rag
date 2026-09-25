@@ -14,7 +14,7 @@ import pytest
 
 from src.pipeline import LOW_CONFIDENCE_RERANK_THRESHOLD, answer_question
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_in_scope_question_answers_without_escalating():
     result = answer_question("What TDS rate applies to dividend payments under Section 88?")

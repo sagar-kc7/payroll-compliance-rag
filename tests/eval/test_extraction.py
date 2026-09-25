@@ -90,7 +90,7 @@ TDS deducted this month: 1500
 Take home: 35223
 """
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_consistent_slip_has_no_warnings():
     result = extract_salary_slip(CONSISTENT_SLIP)
@@ -99,7 +99,7 @@ def test_consistent_slip_has_no_warnings():
         f"{result.arithmetic_warnings}"
     )
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_inconsistent_slip_triggers_warning():
     result = extract_salary_slip(INCONSISTENT_SLIP)
@@ -112,7 +112,7 @@ def test_inconsistent_slip_triggers_warning():
         f"{result.arithmetic_warnings}"
     )
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_messy_formatting_extracts_without_crashing():
     result = extract_salary_slip(MESSY_SLIP)

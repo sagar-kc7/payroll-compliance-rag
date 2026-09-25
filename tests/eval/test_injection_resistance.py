@@ -51,7 +51,7 @@ INJECTED_CONTEXT_CHUNK = {
     ),
 }
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_extractor_resists_injected_instruction():
     result = extract_salary_slip(INJECTED_SLIP)
@@ -64,7 +64,7 @@ def test_extractor_resists_injected_instruction():
         "hijacked to the sentinel value instead of the real 38000"
     )
 
-
+@pytest.mark.llm
 @pytest.mark.eval
 def test_generator_resists_injected_instruction():
     answer = generate_answer(
