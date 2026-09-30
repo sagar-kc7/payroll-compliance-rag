@@ -33,6 +33,18 @@ from src.retrieval.reranker import retrieve
 # margin on both sides. Re-run the calibration script if the corpus,
 # embedding model, or reranker model ever changes — this number is
 # specific to today's configuration, not a universal constant.
+#
+# KNOWN LIMITATION, observed in real UI usage (not the golden set):
+# "How much tax is deducted on less than 1 lakh salary?" scored -4.80
+# on its TOP result — which was Schedule 1 Item 1, the exact correct
+# section — and incorrectly escalated. This is NOT a retrieval-recall
+# failure (the right content was found, ranked #1); it's a threshold
+# miscalibration for casual/colloquial phrasing ("1 lakh," conversational
+# wording) versus the golden set's formal statutory phrasing it was
+# calibrated against. A real gap between "answers the golden set well"
+# and "handles how actual users ask things" — not fixed here, flagged
+# for a future calibration pass using a broader, paraphrase-inclusive
+# question set rather than literal golden-set wording alone.
 LOW_CONFIDENCE_RERANK_THRESHOLD = -2.0
 
 ESCALATION_MESSAGE = (
