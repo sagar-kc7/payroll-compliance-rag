@@ -30,6 +30,10 @@ ENV PYTHONPATH=/app
 
 RUN python src/retrieval/baseline.py
 
+# Render (and most PaaS platforms) assign the port dynamically via
+# $PORT at runtime rather than a fixed value — shell-form CMD so the
+# variable actually expands, with 8000 as a sane local-dev default.
+ENV PORT=8000
 EXPOSE 8000
 
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT}
