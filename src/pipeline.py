@@ -23,29 +23,38 @@ from langsmith import traceable
 from src.generation.answer import generate_answer
 from src.retrieval.reranker import retrieve
 
-# Calibrated against real data (tests/eval/calibrate_confidence_threshold.py),
-# not guessed. Measured 2026-09: in-scope (25-question golden set) top-1
-# rerank scores ranged 1.340-7.650 (mean 4.544); 5 deliberately
-# out-of-scope questions ranged -11.166 to -4.904 (highest: "Who is the
-# current president of Nepal?" — topically Nepal-adjacent but not
-# payroll/tax-relevant, still correctly scored low). Clean ~6.2-point
-# gap between the two groups. -2.0 sits at the midpoint with balanced
-# margin on both sides. Re-run the calibration script if the corpus,
-# embedding model, or reranker model ever changes — this number is
-# specific to today's configuration, not a universal constant.
+# REVISED 2026-09 after a real calibration failure found in live UI
+# testing, not the golden set. Original threshold (-2.0) was calibrated
+# ONLY against the 25-question golden set's phrasing — which is
+# uniformly FORMAL statutory language ("Under Sub-section (2) of
+# Section 4...", written that way deliberately for citation-grounding
+# in Phase 2). Real users don't talk like that.
 #
-# KNOWN LIMITATION, observed in real UI usage (not the golden set):
-# "How much tax is deducted on less than 1 lakh salary?" scored -4.80
-# on its TOP result — which was Schedule 1 Item 1, the exact correct
-# section — and incorrectly escalated. This is NOT a retrieval-recall
-# failure (the right content was found, ranked #1); it's a threshold
-# miscalibration for casual/colloquial phrasing ("1 lakh," conversational
-# wording) versus the golden set's formal statutory phrasing it was
-# calibrated against. A real gap between "answers the golden set well"
-# and "handles how actual users ask things" — not fixed here, flagged
-# for a future calibration pass using a broader, paraphrase-inclusive
-# question set rather than literal golden-set wording alone.
-LOW_CONFIDENCE_RERANK_THRESHOLD = -2.0
+# Tested 8 natural-phrased questions covering existing golden-set
+# topics (no section numbers, casual wording). Two scored WORSE than
+# our worst known out-of-scope example (-4.904, "who is the president
+# of Nepal"): "What TDS rate applies to dividend payments?" scored
+# -5.119, "salary under 1 lakh" scored -7.282 — both while correctly
+# retrieving the right section as the #1 result. This means NO single
+# threshold can perfectly separate natural in-scope phrasing from
+# out-of-scope questions using rerank score alone; formal-vs-any-
+# out-of-scope "clean separation" from the original calibration was an
+# artifact of the golden set's unnaturally formal wording, not a real
+# property of the retrieval system.
+#
+# Threshold lowered to -7.5 (below the worst natural in-scope score
+# found) and the gap is now covered by a SECOND, independent layer:
+# the generator's own "answer only from context" instruction (Phase 5).
+# Verified directly, not assumed: with this threshold, "who is the
+# president of Nepal" now passes the gate (score -4.90) but the
+# generator correctly responded "the provided context does not contain
+# any information about the current president of Nepal" rather than
+# hallucinating an answer. Two-layer defense: gate catches the clearly
+# irrelevant cases cheaply (no generation cost), generator catches
+# what's left. A single-layer score-only gate could not have handled
+# both known failure modes simultaneously — this is a design
+# consequence of that finding, not a preference.
+LOW_CONFIDENCE_RERANK_THRESHOLD = -7.5
 
 ESCALATION_MESSAGE = (
     "I don't have enough confidence in the available source material to "

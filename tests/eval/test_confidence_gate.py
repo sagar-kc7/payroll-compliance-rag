@@ -14,7 +14,7 @@ import pytest
 
 from src.pipeline import LOW_CONFIDENCE_RERANK_THRESHOLD, answer_question
 
-@pytest.mark.llm
+
 @pytest.mark.eval
 def test_in_scope_question_answers_without_escalating():
     result = answer_question("What TDS rate applies to dividend payments under Section 88?")
@@ -22,6 +22,24 @@ def test_in_scope_question_answers_without_escalating():
     assert result.citations, "Expected real citations on a non-escalated answer"
     assert result.confidence_score is not None
     assert result.confidence_score >= LOW_CONFIDENCE_RERANK_THRESHOLD
+
+
+@pytest.mark.llm
+@pytest.mark.eval
+def test_natural_phrasing_does_not_falsely_escalate():
+    """
+    Regression test for a real bug found in live UI testing: natural,
+    casually-phrased in-scope questions (no section numbers, unlike the
+    formal golden-set phrasing) scored worse than known out-of-scope
+    questions and were incorrectly escalating. See the threshold's
+    docstring in src/pipeline.py for the full investigation.
+    """
+    result = answer_question("What TDS rate applies to dividend payments?")
+    assert not result.escalated, (
+        f"Natural-phrased in-scope question incorrectly escalated "
+        f"(score={result.confidence_score}) — threshold regression"
+    )
+    assert "10" in result.answer or "ten" in result.answer.lower()
 
 
 @pytest.mark.eval
