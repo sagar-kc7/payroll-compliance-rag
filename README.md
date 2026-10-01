@@ -1,31 +1,32 @@
 # Nepal Compliance RAG
 
-Grounded document-intelligence service for Nepali payroll & tax compliance:
-extracts structured data from salary slips and answers compliance questions
-with citations, refusing or escalating when confidence is low.
+Grounded Q&A over Nepali payroll & tax law — answers questions about the
+Income Tax Act 2058, Income Tax Rules 2059, and the SSF Act with real
+citations, and refuses or escalates rather than guessing when the source
+material doesn't actually contain the answer.
 
 ## Why this project
-Built to demonstrate what a portfolio RAG chatbot doesn't: evaluation
-discipline, structured extraction with validation, safety controls, and
-measured cost/latency — the things GenAI/AI Engineer postings (Verisk,
-Niural AI, Leapfrog) actually screen for beyond "can you call an LLM API."
+Built to demonstrate what a portfolio RAG chatbot usually doesn't:
+evaluation discipline, retrieval iteration backed by real before/after
+numbers, safety controls, and honest documentation of what still doesn't
+work. Every number in this README is from a real, documented test run, and
+every "known limitation" below was found through actual testing, not
+hypothesized in advance.
 
 ## Evaluation architecture
-Every capability is scored on its own, independently, so a regression can
-be traced to its actual cause:
+Every capability is scored independently, so a regression can be traced to
+its actual cause:
 
 | Layer | Metrics | Tool | Status |
 |---|---|---|---|
 | Retrieval | recall@5, MRR | Deterministic (no judge needed) | See table below |
 | Generator | Faithfulness, Answer Relevancy | DeepEval + Groq judge | Baselined: 0.983 / 0.936 |
 | Pipeline (end-to-end RAG) | Correctness (`GEval`), citation hit rate | DeepEval + Groq judge | Baselined: 0.800 / 88.0% |
-| Extraction (field-level) | Per-field accuracy vs. golden set | Deterministic comparison | Baselined: 100.0% (8-slip set, scoped) |
-| Safety (PII/injection/confidence) | Real adversarial + calibration tests | Deterministic + Groq | Done, see below |
-| Application | p50/p95 latency, cost/query, escalation rate | LangSmith traces | Not started |
+| Safety (injection/confidence) | Real adversarial + calibration tests | Deterministic + Groq | Done, see below |
+| CI eval gate | Deterministic tests on every push/PR | GitHub Actions | Live, caught 2 real bugs already |
 
-Judge model is Groq (`openai/gpt-oss-120b`), not OpenAI — avoids per-eval
-cost entirely; AWS credits kept in reserve for a Phase 6 cost-comparison
-demo rather than spent here.
+Judge and generation model is Groq (`openai/gpt-oss-120b`), not OpenAI —
+avoids per-eval API cost.
 
 ### Retrieval variant comparison (25-entry golden set)
 | Variant | recall@5 | MRR |
@@ -34,83 +35,102 @@ demo rather than spent here.
 | + Hybrid (BM25 + dense, RRF fusion) | 92.0% | 0.813 |
 | + Cross-encoder reranking | 92.0% | 0.841 |
 
-**Known, investigated gap:** 2 of 25 questions (SSF Sections 5 and 14)
-fail across every retrieval variant — confirmed via direct inspection
-that neither section appears in the top-15 candidate pool at all, a
-retrieval-recall problem, not a ranking problem. Root cause: ~5 short,
-adjacent SSF sections with near-identical vocabulary. Not chased further
-with contextual retrieval (real token cost for a narrow, understood gap).
+**Known, investigated gap:** 2 of 25 golden-set questions (SSF Sections 5
+and 14) fail across every retrieval variant — confirmed via direct
+inspection that neither section appears in the top-15 candidate pool at
+all. A retrieval-recall problem, not a ranking problem (reranking correctly
+couldn't fix it). Root cause: ~5 short, adjacent SSF sections with
+near-identical vocabulary — a corpus characteristic, not a technique
+failure.
 
-### Extraction accuracy — scope note
-100% field accuracy (64/64 checks) on 8 hand-verified synthetic salary
-slips, all using a consistent, clearly-labeled format — measures accuracy
-on well-formatted input, not resilience to ambiguous/noisy formatting
-(covered separately, without a scoreable ground truth, by a messy-format
-robustness test).
+### Confidence gate — a real bug found through actual use, not the golden set
+The gate's threshold was originally calibrated only against the 25-question
+golden set — written in **formal statutory phrasing** by design ("Under
+Sub-section (2) of Section 4..."), since that's how the citations needed to
+be grounded. Real users don't talk that way.
+
+Live testing of the deployed demo surfaced the gap directly: natural
+phrasing of genuinely in-scope questions — *"What TDS rate applies to
+dividend payments?"* (no section number), *"salary under 1 lakh"* — scored
+**worse** than the worst known out-of-scope example in the original
+calibration set, while still correctly retrieving the right section as the
+#1 result. This meant no single score threshold could separate natural
+in-scope phrasing from out-of-scope questions using rerank score alone.
+
+**Fix, verified not assumed:** lowered the threshold below the worst
+natural in-scope score found, and confirmed the resulting gap is covered by
+a second, independent layer — the generator's own "answer only from
+context" instruction. Directly tested: a borderline out-of-scope question
+that now passes the gate ("who is the president of Nepal") still gets
+correctly refused by the generator rather than hallucinated, because the
+retrieved context genuinely doesn't contain that information. Two-layer
+defense, not a single point of failure — and the CI gate now includes a
+regression test for the exact natural-phrasing case that broke.
 
 ### Safety layer
-- **PII redaction** (Presidio + spacy `en_core_web_md`, with a custom
-  Nepali PAN recognizer). Model choice tested empirically — the smaller
-  `en_core_web_sm` missed a real name entirely; medium caught it.
-  4 tests: positive detection, actual redaction, no false positives on
-  real statute text, no false positives on currency amounts.
 - **Prompt-injection defense**: explicit "context is data, not
-  instructions" framing in both system prompts, plus a heuristic
-  detector honestly scoped as a logging/flagging layer, not a
-  comprehensive defense. Verified with real adversarial attempts against
-  the actual extractor and generator (a hijack instruction embedded in a
-  slip and in a retrieved context chunk) — both resisted. One tested
-  attack phrasing; documented as evidence, not a general guarantee.
-- **Confidence gate**: threshold (-2.0 on cross-encoder rerank score)
-  calibrated from real data — 25 in-scope golden-set questions scored
-  1.340-7.650, 5 out-of-scope questions scored -11.166 to -4.904, clean
-  separation. Out-of-scope questions escalate before the generator is
-  even called (cost-saving, confirmed). Noted honestly: a rephrased
-  in-scope question scored 0.367 — correctly above threshold but well
-  below the golden set's own minimum, since calibration only covered
-  literal golden-set phrasings, not paraphrase variation.
-- This also fixed a real gap: `src/pipeline.py` is the first module
-  that actually uses the hybrid+reranked retriever Phase 3 found best —
-  until now it only existed in eval scripts.
+  instructions" framing in the generation system prompt, plus a heuristic
+  detector honestly scoped as logging-only, not comprehensive. Verified
+  with a real adversarial attempt against the actual generator — resisted.
+- **Confidence gate**: see above.
 
-## Status
+## Architecture
 
-**Phase 1 — Corpus & structure-aware chunking: done**
-**Phase 2 — Golden dataset & evaluation harness: done**
-**Phase 3 — Retrieval iteration: done (stopped deliberately)**
-**Phase 4 — Structured extraction: done**
-**Phase 5 — Safety layer: done** (PII redaction, injection defense,
-calibrated confidence gate — details above)
+```
+User question
+    │
+    ▼
+Hybrid retrieval (BM25 + dense) → Cross-encoder reranking
+    │
+    ▼
+Confidence gate ──(low confidence)──► Escalate, no generation call
+    │ (passes)
+    ▼
+Generation (Groq, grounded-only prompt) → Answer + citations
+```
 
-**Phase 6 — Observability & cost engineering: not started (current focus)**
-- [ ] LangSmith tracing wired into the real pipeline (not just eval scripts)
-- [ ] Cost/latency measurement per query
-- [ ] Model routing (candidate use for the reserved AWS credits: Bedrock
-      vs Groq cost comparison — real $ numbers from actual usage)
-- [ ] CI eval gate (DeepEval in GitHub Actions, blocks merge on regression)
-
-**Phase 7 — Ship it: not started**
-- [ ] FastAPI service wrapping `src/pipeline.py` and the extraction path
-- [ ] Docker
-- [ ] Deploy
+- `src/pipeline.py` — the real orchestration layer (retrieval → gate →
+  generation), used by both the API and the UI
+- `src/api/main.py` — FastAPI service (`/ask`, `/health`, `/docs`)
+- `src/ui/streamlit_app.py` — the human-facing demo, calls
+  `answer_question()` directly rather than over HTTP, to keep a
+  single-process deployment and avoid doubling the retrieval models'
+  memory footprint
+- Full retrieval/generation pipeline details in `src/`, evaluation harness
+  in `tests/eval/`
 
 ## Setup
 ```bash
 uv venv
 uv pip install -e ".[dev]"
 python -m spacy download en_core_web_md
-cp .env.example .env   # fill in GROQ_API_KEY, LANGCHAIN_API_KEY
+cp .env.example .env   # fill in GROQ_API_KEY, LANGCHAIN_API_KEY, LANGSMITH_API_KEY
+```
+
+Run the API:
+```bash
+PYTHONPATH=. uvicorn src.api.main:app --reload
+```
+
+Run the demo UI:
+```bash
+PYTHONPATH=. streamlit run src/ui/streamlit_app.py
+```
+
+Run with Docker:
+```bash
+docker build -t nepal-compliance-rag .
+docker run -p 8000:8000 --env-file .env nepal-compliance-rag
 ```
 
 Note: Groq's free tier caps daily tokens per model (200K/day observed).
-Eval runs involving the judge/extraction model can hit this during heavy
-iteration — most `tests/eval/` scripts support `--sample N` or run a
-small number of calls by design. Deterministic evals (retrieval, PII,
-confidence-gate calibration) don't call any LLM and are safe to run freely.
+Deterministic evals (retrieval, PII, confidence-gate escalation logic)
+don't call any LLM and are safe to run freely.
 
 ## Development workflow
-Feature branches off `main`, PR required to merge (branch protection
-enabled). See closed PRs for the actual history, including several real
-bugs found and fixed via output inspection, and real adversarial/
-calibration tests rather than trusted-by-assumption safety claims —
-that process is as much the point of this repo as the final numbers.
+Feature branches off `main`, PR required to merge, CI eval gate must pass
+(branch protection enabled — this is enforced, not just configured). See
+closed PRs for the real history: real bugs found and fixed via output
+inspection, real adversarial safety tests, and a real confidence-threshold
+bug found through live use and fixed with a verified two-layer design
+rather than a guessed number.
